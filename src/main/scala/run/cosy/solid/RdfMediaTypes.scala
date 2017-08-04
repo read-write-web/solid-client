@@ -1,6 +1,6 @@
 package run.cosy.solid
 
-import org.w3.banana.jena.Jena.{Rdf, jsonldReader, ntriplesReader, rdfXMLReader, turtleReader}
+import org.w3.banana.{JsonLDReaderModule, NTriplesReaderModule, RDF, RDFModule, RDFXMLReaderModule, TurtleReaderModule}
 import run.cosy.solid.client.{MissingParserException, ParseException, ResponseSummary}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -9,7 +9,7 @@ import scala.util.control.NoStackTrace
 object RdfMediaTypes {
    import akka.http.scaladsl.model
    import akka.http.scaladsl.unmarshalling.{FromEntityUnmarshaller, PredefinedFromEntityUnmarshallers}
-   import model.ContentType
+   import model.{ContentType, MediaTypes}
    import model.HttpCharsets._
    import model.MediaType.{applicationWithFixedCharset, applicationWithOpenCharset, text}
 
@@ -22,11 +22,20 @@ object RdfMediaTypes {
    val `application/rdf+xml` = applicationWithOpenCharset("rdf+xml","rdf")
    val `application/ntriples` = applicationWithFixedCharset("ntriples",`UTF-8`,"nt")
    val `application/ld+json` = applicationWithOpenCharset("ld+json","jsonld")
+   val `text/html` = MediaTypes.`text/html`
    
    
-   def rdfUnmarshaller(response: ResponseSummary)(
-    implicit ec: ExecutionContext
-   ): FromEntityUnmarshaller[Rdf#Graph] =
+   def rdfUnmarshaller[R<:RDF](response: ResponseSummary)(implicit
+    ec: ExecutionContext,
+    readers: RDFModule
+     with RDFXMLReaderModule
+     with TurtleReaderModule
+     with NTriplesReaderModule
+     with JsonLDReaderModule { type Rdf = R }
+   ): FromEntityUnmarshaller[R#Graph] = {
+      //importing all readers this way is one way to go, but makes it difficult to integrate
+      //with frameworks that may have missing ones
+      import readers._
       PredefinedFromEntityUnmarshallers.stringUnmarshaller flatMapWithInput { (entity, string) ⇒
          //todo: use non blocking parsers
          val readerOpt = entity.contentType.mediaType match { //<- this needs to be tuned!
@@ -37,18 +46,20 @@ object RdfMediaTypes {
             // case `text/html` => new SesameRDFaReader()
             case _ => None
          }
-         readerOpt.map{ reader=>
+         readerOpt.map { reader =>
             Future.fromTry {
-               reader.read(new java.io.StringReader(string),response.on.toString) recoverWith {
+               reader.read(new java.io.StringReader(string), response.on.toString) recoverWith {
                   case e => Failure(
-                     ParseException(response,string.take(400),e)
-                  )}
+                     ParseException(response, string.take(400), e)
+                  )
+               }
             }
          } getOrElse {
             scala.concurrent.Future.failed(
-               MissingParserException(response,string.take(400))
+               MissingParserException(response, string.take(400))
             )
          }
       }
+   }
    
 }

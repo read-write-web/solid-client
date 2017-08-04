@@ -4,6 +4,7 @@ version := "0.1"
 
 scalaVersion := "2.12.3"
 
+//resolvers += "bblfish-releases" at "http://bblfish.net/work/repo/releases/"
 
 resolvers += "bblfish-snapshots" at "http://bblfish.net/work/repo/snapshots/"
 
