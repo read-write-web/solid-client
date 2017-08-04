@@ -26,10 +26,7 @@ import scala.util.{Failure, Success, Try}
 
 
 object Web {
-   type PGWeb = IRepresentation[PointedGraph[Rdf]]
-   
-   import akka.http.scaladsl.model.MediaTypes.`text/html`
-   
+   type PGWeb = Interpretation[PointedGraph[Rdf]]
    
    val foaf = FOAFPrefix[Rdf]
    val rdfs = RDFSPrefix[Rdf]
@@ -52,10 +49,10 @@ object Web {
    }
    
    //interpreted HttpResponse
-   case class IRepresentation[C](origin: AkkaUri, status: StatusCode,
+   case class Interpretation[I](origin: AkkaUri, status: StatusCode,
     headers: Seq[HttpHeader], fromContentType: ContentType,
-    content: C) {
-      def map[D](f: C => D) = this.copy(content=f(content))
+    content: I) {
+      def map[O](f: I => O) = this.copy(content=f(content))
    }
    
    
@@ -135,6 +132,7 @@ object Web {
    
 }
 
+/** summary of a response for logging and debugging purposes */
 case class ResponseSummary(
  on: AkkaUri, code: StatusCode,
  header: Seq[HttpHeader], respTp: ContentType)
@@ -147,9 +145,11 @@ class Web(implicit val ec: ExecutionContext, val as: ActorSystem, val mat: Mater
    
    //todo: add something to the response re number of redirects
    //see: https://github.com/akka/akka-http/issues/195
-   def GET(req: HttpRequest, maxRedirect: Int = 4,
+   def GET(
+    req: HttpRequest, maxRedirect: Int = 4,
     history: List[ResponseSummary]=List(),
-    keyChain: List[Sig.Client]=List()): Future[(HttpResponse,List[ResponseSummary])] = {
+    keyChain: List[Sig.Client]=List()
+   ): Future[(HttpResponse,List[ResponseSummary])] = {
       try {
          import StatusCodes.{Success, _}
          Http().singleRequest(req)
@@ -199,7 +199,7 @@ class Web(implicit val ec: ExecutionContext, val as: ActorSystem, val mat: Mater
    
    
    
-   def GETrdf(uri: AkkaUri): Future[IRepresentation[Rdf#Graph]] = {
+   def GETrdf(uri: AkkaUri): Future[Interpretation[Rdf#Graph]] = {
       import akka.http.scaladsl.unmarshalling.Unmarshal
       
       GETRdfDoc(uri).flatMap {
@@ -208,7 +208,7 @@ class Web(implicit val ec: ExecutionContext, val as: ActorSystem, val mat: Mater
                ResponseSummary(uri,status,headers,entity.contentType)
             )
             Unmarshal(entity).to[Rdf#Graph].map {g =>
-               IRepresentation[Rdf#Graph](uri,status,headers,entity.contentType,g)
+               Interpretation[Rdf#Graph](uri,status,headers,entity.contentType,g)
             }
          }
       }
