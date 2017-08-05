@@ -17,7 +17,9 @@ import akka.http.scaladsl.model.{Uri => AkkaUri, _}
 import akka.stream._
 import akka.stream.scaladsl._
 import akka.http.scaladsl.model.HttpEntity.Default
+import akka.http.scaladsl.unmarshalling.{PredefinedFromEntityUnmarshallers, Unmarshal}
 import akka.util.ByteString
+import org.w3.banana.io.{RDFWriter, Turtle}
 
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext
@@ -53,15 +55,18 @@ object Web {
 /** summary of a response for logging and debugging purposes */
 case class ResponseSummary(
  on: AkkaUri, code: StatusCode,
- header: Seq[HttpHeader], respTp: ContentType)
+ header: Seq[HttpHeader],
+ respTp: ContentType,
+ content: Future[String] = Future.failed(new Exception("not used"))
+)
 
-class Web[R<:RDF](implicit
+class Web[Rdf<:RDF](implicit
    val ec: ExecutionContext,
    val as: ActorSystem,
    val mat: Materializer
 ) {
    import Web._
-   type PGWeb = Interpretation[PointedGraph[R]]
+   type PGWeb = Interpretation[PointedGraph[Rdf]]
    
    
    
@@ -70,12 +75,12 @@ class Web[R<:RDF](implicit
    /**
      * Act on the request by calling into the Web.
      * @param req
-     * @param maxRedirect
-     * @param history
-     * @param keyChain
-     * @return
+     * @param maxRedirect maximum number of redicrects
+     * @param history of requests as response summaries
+     * @param keyChain list of keys to be used for authentication
+     * @return a successful Http Response and a history of responses that lead to it, or a Future.failure
      */
-   def ACT(
+   def run(
     req: HttpRequest, maxRedirect: Int = 4,
     history: List[ResponseSummary]=List(),
     keyChain: List[Sig.Client]=List()
@@ -85,17 +90,28 @@ class Web[R<:RDF](implicit
          Http().singleRequest(req)
           .recoverWith{case e=>Future.failed(ConnectionException(req.uri.toString,e))}
           .flatMap { resp =>
-             def summary = ResponseSummary(req.uri,resp.status,resp.headers,resp.entity.contentType)
+             def summary = {
+                import PredefinedFromEntityUnmarshallers.stringUnmarshaller
+                import akka.http.scaladsl.unmarshalling.Unmarshal
+                // I assume that the summary function actually discards the entity bytes so we don't need this:
+                // resp.discardEntityBytes()
+                ResponseSummary(
+                   req.uri,resp.status,resp.headers,
+                   resp.entity.contentType,
+                   Unmarshal(resp.entity).to[String]
+                )
+             }
              resp.status match {
                 case Success(_) => Future.successful((resp,summary::history))
                 case Redirection(_) => {
                    resp.header[headers.Location].map { loc =>
                       val newReq = req.copy(uri = loc.uri)
-                      resp.discardEntityBytes()
                       if (maxRedirect > 0)
-                         ACT(newReq, maxRedirect - 1,summary::history)
+                         run(newReq, maxRedirect - 1,summary::history)
                       else Http().singleRequest(newReq).map((_,summary::history))
-                   }.getOrElse(Future.failed(HTTPException(summary,s"Location header not found on ${resp.status} for ${req.uri}")))
+                   }.getOrElse(Future.failed(
+                      HTTPException(summary,s"Location header not found on ${resp.status} for ${req.uri}",history)
+                   ))
                 }
                 case Unauthorized  => {
                    import akka.http.scaladsl.model.headers.{Date, `WWW-Authenticate`}
@@ -104,30 +120,28 @@ class Web[R<:RDF](implicit
                    val tryFuture = for {
                       wwa <- resp.header[`WWW-Authenticate`]
                        .fold[Try[`WWW-Authenticate`]](
-                         Failure(HTTPException(summary,"no WWW-Authenticate header"))
+                         Failure(HTTPException(summary,"no WWW-Authenticate header",history))
                       )(scala.util.Success(_))
                       headers <- Try { Sig.Client.signatureHeaders(wwa).get } //<- this should always succeed
                       client <- keyChain.headOption.fold[Try[Sig.Client]](
-                         Failure(AuthException(summary,"no client keys"))
+                         Failure(AuthException(summary,"no client keys",history))
                       )(scala.util.Success(_))
                       authorization <- client.authorize(reqWithDate,headers)
                    } yield {
-                      ACT(reqWithDate.addHeader(authorization), maxRedirect, summary::history, keyChain.tail)
+                      run(reqWithDate.addHeader(authorization), maxRedirect, summary::history, keyChain.tail)
                    }
                    Future.fromTry(tryFuture).flatten
                 }
-                case _ => {
-                   resp.discardEntityBytes()
-                   Future.failed(StatusCodeException(summary))
-                }
+                case _ =>
+                   Future.failed(StatusCodeException(summary,history))
              }
           }
       } catch {
-         case NonFatal(e) => Future.failed(ConnectionException(req.uri.toString,e))
+         case NonFatal(e) => Future.failed(ConnectionException(req.uri.toString,e,history))
       }
    }
    
-   def GETRdfDoc(uri: AkkaUri, maxRedirect: Int=4): Future[HttpResponse] = ACT(rdfGetRequest(uri),maxRedirect).map(_._1)
+   def GETRdfDoc(uri: AkkaUri, maxRedirect: Int=4): Future[HttpResponse] = run(rdfGetRequest(uri),maxRedirect).map(_._1)
    
    
 //   def GETrdf(uri: AkkaUri): Future[Interpretation[R#Graph]] = {
@@ -146,23 +160,27 @@ class Web[R<:RDF](implicit
 //   }
    
    
-   def turtlePostRequest(container: AkkaUri, graph: R#Graph)(
-    implicit writer: RDFModule with TurtleWriterModule { type Rdf = R }
+   def turtlePostRequest(container: AkkaUri, graph: Rdf#Graph)(
+    implicit writer: RDFWriter[Rdf, Try, Turtle]
    ): Try[HttpRequest] = { //not much reason why this should fail!
-      writer.turtleWriter.asString(graph,"").map { ttl =>
+      writer.asString(graph,"").map { ttl =>
          HttpRequest(
             HttpMethods.POST,
             entity = Default(
                RdfMediaTypes.`text/turtle`.withCharset(HttpCharsets.`UTF-8`),
                ttl.length,
-               Source.single(ByteString(ttl))))
+               Source.single(ByteString(ttl))),
+            uri = container
+         )
       }
    }
    
-//   def POSTRdfDoc(container: AkkaUri, graph: R#Graph, maxRedirect: Int=4): Future[HttpResponse] =
-//      ACT(turtlePostRequest(container,graph),maxRedirect).map(_._1)
-   
-   
+   def POSTRdfDoc(container: AkkaUri, graph: Rdf#Graph, maxRedirect: Int=4)(
+     implicit writer: RDFWriter[Rdf, Try, Turtle]
+   ): Future[HttpResponse] =
+      Future.fromTry(turtlePostRequest(container,graph)).flatMap{ req=>
+         run(req,maxRedirect).map(_._1)
+      }
    
    //   def pointedGET(uri: AkkaUri): Future[PGWeb] =
    //   GETrdf(uri).map(_.map(PointedGraph[R](uri.toRdf,_)))

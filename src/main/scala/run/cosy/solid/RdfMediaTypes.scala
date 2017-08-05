@@ -1,9 +1,11 @@
 package run.cosy.solid
 
+import org.w3.banana.io._
 import org.w3.banana.{JsonLDReaderModule, NTriplesReaderModule, RDF, RDFModule, RDFXMLReaderModule, TurtleReaderModule}
 import run.cosy.solid.client.{MissingParserException, ParseException, ResponseSummary}
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
 import scala.util.control.NoStackTrace
 
 object RdfMediaTypes {
@@ -27,22 +29,21 @@ object RdfMediaTypes {
    
    def rdfUnmarshaller[R<:RDF](response: ResponseSummary)(implicit
     ec: ExecutionContext,
-    readers: RDFModule
-     with RDFXMLReaderModule
-     with TurtleReaderModule
-     with NTriplesReaderModule
-     with JsonLDReaderModule { type Rdf = R }
+    rdfxmlReader: RDFReader[R, Try, RDFXML],
+    turtleReader: RDFReader[R, Try, Turtle],
+    ntriplesReader: RDFReader[R, Try, NTriples],
+    jsonLdReader: RDFReader[R, Try, JsonLd]
+//  turtle: RDFWriter[R, Try, Turtle]
    ): FromEntityUnmarshaller[R#Graph] = {
       //importing all readers this way is one way to go, but makes it difficult to integrate
       //with frameworks that may have missing ones
-      import readers._
       PredefinedFromEntityUnmarshallers.stringUnmarshaller flatMapWithInput { (entity, string) ⇒
          //todo: use non blocking parsers
          val readerOpt = entity.contentType.mediaType match { //<- this needs to be tuned!
             case `text/turtle` => Some(turtleReader)
-            case `application/rdf+xml` => Some(rdfXMLReader)
+            case `application/rdf+xml` => Some(rdfxmlReader)
             case `application/ntriples` => Some(ntriplesReader)
-            case `application/ld+json` => Some(jsonldReader)
+            case `application/ld+json` => Some(jsonLdReader)
             // case `text/html` => new SesameRDFaReader()
             case _ => None
          }
