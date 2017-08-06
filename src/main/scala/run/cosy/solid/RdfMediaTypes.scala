@@ -1,5 +1,6 @@
 package run.cosy.solid
 
+import akka.http.scaladsl.model.headers.{ModeledCustomHeader, ModeledCustomHeaderCompanion}
 import org.w3.banana.io._
 import org.w3.banana.{JsonLDReaderModule, NTriplesReaderModule, RDF, RDFModule, RDFXMLReaderModule, TurtleReaderModule}
 import run.cosy.solid.client.{MissingParserException, ParseException, ResponseSummary}
@@ -33,7 +34,7 @@ object RdfMediaTypes {
     turtleReader: RDFReader[R, Try, Turtle],
     ntriplesReader: RDFReader[R, Try, NTriples],
     jsonLdReader: RDFReader[R, Try, JsonLd]
-//  turtle: RDFWriter[R, Try, Turtle]
+//  rdfa: RDFReader[R, Try, RDFaXHTML]
    ): FromEntityUnmarshaller[R#Graph] = {
       //importing all readers this way is one way to go, but makes it difficult to integrate
       //with frameworks that may have missing ones
@@ -44,7 +45,7 @@ object RdfMediaTypes {
             case `application/rdf+xml` => Some(rdfxmlReader)
             case `application/ntriples` => Some(ntriplesReader)
             case `application/ld+json` => Some(jsonLdReader)
-            // case `text/html` => new SesameRDFaReader()
+            // case `text/html` => Some(rdfa)
             case _ => None
          }
          readerOpt.map { reader =>
@@ -63,4 +64,15 @@ object RdfMediaTypes {
       }
    }
    
+}
+
+final class Slug(name: String) extends ModeledCustomHeader[Slug] {
+   override def renderInRequests = true
+   override def renderInResponses = false
+   override val companion = Slug
+   override def value: String = name
+}
+object Slug extends ModeledCustomHeaderCompanion[Slug] {
+   override val name = "Slug"
+   override def parse(value: String) = Try(new Slug(value))
 }

@@ -8,7 +8,7 @@ package run.cosy.solid.client
 //import $ivy.`ch.qos.logback:logback-classic:1.2.3`
 
 import _root_.run.cosy.auth.{HttpSignature => Sig}
-import _root_.run.cosy.solid.RdfMediaTypes
+import _root_.run.cosy.solid.{RdfMediaTypes, Slug}
 import _root_.run.cosy.solid.util._
 import akka.NotUsed
 import akka.actor.ActorSystem
@@ -46,7 +46,7 @@ object Web {
    case class Interpretation[I](origin: AkkaUri, status: StatusCode,
     headers: Seq[HttpHeader], fromContentType: ContentType,
     content: I) {
-      def map[O](f: I => O) = this.copy(content=f(content))
+      def map[O](f: I => O): Interpretation[O] = this.copy(content=f(content))
    }
    
    
@@ -74,7 +74,7 @@ class Web[Rdf<:RDF](implicit
    //see: https://github.com/akka/akka-http/issues/195
    /**
      * Act on the request by calling into the Web.
-     * @param req
+     * @param req completed HttpRequest
      * @param maxRedirect maximum number of redicrects
      * @param history of requests as response summaries
      * @param keyChain list of keys to be used for authentication
@@ -103,7 +103,7 @@ class Web[Rdf<:RDF](implicit
              }
              resp.status match {
                 case Success(_) => Future.successful((resp,summary::history))
-                case Redirection(_) => {
+                case Redirection(_) =>
                    resp.header[headers.Location].map { loc =>
                       val newReq = req.copy(uri = loc.uri)
                       if (maxRedirect > 0)
@@ -112,8 +112,7 @@ class Web[Rdf<:RDF](implicit
                    }.getOrElse(Future.failed(
                       HTTPException(summary,s"Location header not found on ${resp.status} for ${req.uri}",history)
                    ))
-                }
-                case Unauthorized  => {
+                case Unauthorized  =>
                    import akka.http.scaladsl.model.headers.{Date, `WWW-Authenticate`}
                    val date = Date(akka.http.scaladsl.model.DateTime.now)
                    val reqWithDate = req.addHeader(date)
@@ -131,7 +130,6 @@ class Web[Rdf<:RDF](implicit
                       run(reqWithDate.addHeader(authorization), maxRedirect, summary::history, keyChain.tail)
                    }
                    Future.fromTry(tryFuture).flatten
-                }
                 case _ =>
                    Future.failed(StatusCodeException(summary,history))
              }
@@ -160,7 +158,7 @@ class Web[Rdf<:RDF](implicit
 //   }
    
    
-   def turtlePostRequest(container: AkkaUri, graph: Rdf#Graph)(
+   def turtlePostRequest(container: AkkaUri, graph: Rdf#Graph, slug: Option[String]=None)(
     implicit writer: RDFWriter[Rdf, Try, Turtle]
    ): Try[HttpRequest] = { //not much reason why this should fail!
       writer.asString(graph,"").map { ttl =>
@@ -170,7 +168,8 @@ class Web[Rdf<:RDF](implicit
                RdfMediaTypes.`text/turtle`.withCharset(HttpCharsets.`UTF-8`),
                ttl.length,
                Source.single(ByteString(ttl))),
-            uri = container
+            uri = container,
+            headers = slug.toList.map(Slug(_))
          )
       }
    }
