@@ -8,32 +8,30 @@ package run.cosy.solid.client
 //import $ivy.`ch.qos.logback:logback-classic:1.2.3`
 
 import _root_.run.cosy.auth.{HttpSignature => Sig}
-import _root_.run.cosy.solid.{RdfMediaTypes, Slug}
 import _root_.run.cosy.solid.util._
-import akka.NotUsed
+import _root_.run.cosy.solid.{RdfMediaTypes, Slug}
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
+import akka.http.scaladsl.model.HttpEntity.Default
 import akka.http.scaladsl.model.{Uri => AkkaUri, _}
+import akka.http.scaladsl.unmarshalling.Unmarshaller
 import akka.stream._
 import akka.stream.scaladsl._
-import akka.http.scaladsl.model.HttpEntity.Default
-import akka.http.scaladsl.unmarshalling.{PredefinedFromEntityUnmarshallers, Unmarshal}
 import akka.util.ByteString
+import org.w3.banana._
 import org.w3.banana.io.{RDFWriter, Turtle}
 
-import scala.concurrent.Future
-import scala.concurrent.ExecutionContext
-import scala.util.control.{NoStackTrace, NonFatal}
-import scala.util.{Failure, Success, Try}
-import org.w3.banana.{RDFModule, RDFXMLReaderModule, TurtleReaderModule, _}
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.control.NonFatal
+import scala.util.{Failure, Try}
 
 
 object Web {
    
    
    def rdfGetRequest(uri: AkkaUri): HttpRequest = {
-      import akka.http.scaladsl.model.headers.Accept
       import RdfMediaTypes._
+      import akka.http.scaladsl.model.headers.Accept
       HttpRequest(uri=uri.fragmentLess)
        .addHeader(Accept(`text/turtle`,`application/rdf+xml`,
           `application/ntriples`,
@@ -68,9 +66,6 @@ class Web[Rdf<:RDF](implicit
    import Web._
    type PGWeb = Interpretation[PointedGraph[Rdf]]
    
-   
-   
-   
    //see: https://github.com/akka/akka-http/issues/195
    /**
      * Act on the request by calling into the Web.
@@ -84,59 +79,55 @@ class Web[Rdf<:RDF](implicit
     req: HttpRequest, maxRedirect: Int = 4,
     history: List[ResponseSummary]=List(),
     keyChain: List[Sig.Client]=List()
-   ): Future[(HttpResponse,List[ResponseSummary])] = {
-      try {
-         import StatusCodes.{Success, _}
-         Http().singleRequest(req)
-          .recoverWith{case e=>Future.failed(ConnectionException(req.uri.toString,e))}
-          .flatMap { resp =>
-             def summary = {
-                import PredefinedFromEntityUnmarshallers.stringUnmarshaller
-                import akka.http.scaladsl.unmarshalling.Unmarshal
-                // I assume that the summary function actually discards the entity bytes so we don't need this:
-                // resp.discardEntityBytes()
-                ResponseSummary(
-                   req.uri,resp.status,resp.headers,
-                   resp.entity.contentType,
-                   Unmarshal(resp.entity).to[String]
-                )
-             }
-             resp.status match {
-                case Success(_) => Future.successful((resp,summary::history))
-                case Redirection(_) =>
-                   resp.header[headers.Location].map { loc =>
-                      val newReq = req.copy(uri = loc.uri)
-                      if (maxRedirect > 0)
-                         run(newReq, maxRedirect - 1,summary::history)
-                      else Http().singleRequest(newReq).map((_,summary::history))
-                   }.getOrElse(Future.failed(
-                      HTTPException(summary,s"Location header not found on ${resp.status} for ${req.uri}",history)
-                   ))
-                case Unauthorized  =>
-                   import akka.http.scaladsl.model.headers.{Date, `WWW-Authenticate`}
-                   val date = Date(akka.http.scaladsl.model.DateTime.now)
-                   val reqWithDate = req.addHeader(date)
-                   val tryFuture = for {
-                      wwa <- resp.header[`WWW-Authenticate`]
-                       .fold[Try[`WWW-Authenticate`]](
-                         Failure(HTTPException(summary,"no WWW-Authenticate header",history))
-                      )(scala.util.Success(_))
-                      headers <- Try { Sig.Client.signatureHeaders(wwa).get } //<- this should always succeed
-                      client <- keyChain.headOption.fold[Try[Sig.Client]](
-                         Failure(AuthException(summary,"no client keys",history))
-                      )(scala.util.Success(_))
-                      authorization <- client.authorize(reqWithDate,headers)
-                   } yield {
-                      run(reqWithDate.addHeader(authorization), maxRedirect, summary::history, keyChain.tail)
-                   }
-                   Future.fromTry(tryFuture).flatten
-                case _ =>
-                   Future.failed(StatusCodeException(summary,history))
-             }
+   ): Future[(HttpResponse,List[ResponseSummary])] = try {
+      import StatusCodes.{Success, Redirection, Unauthorized}
+      Http().singleRequest(req)
+       .recoverWith{case e=>Future.failed(ConnectionException(req.uri.toString,e,history))}
+       .flatMap { resp =>
+          def summary = {
+             ResponseSummary(
+                req.uri,resp.status,resp.headers,
+                resp.entity.contentType,
+                resp.entity.dataBytes.take(1)
+                 .map(_.decodeString(Unmarshaller.bestUnmarshallingCharsetFor(resp.entity).nioCharset))
+                 .runFold("")((prev,str)=>prev++"chunk["+str+"]")
+             )
           }
-      } catch {
-         case NonFatal(e) => Future.failed(ConnectionException(req.uri.toString,e,history))
-      }
+          resp.status match {
+             case Success(_) => Future.successful((resp,summary::history))
+             case Redirection(_) =>
+                resp.header[headers.Location].map { loc =>
+                   val newReq = req.copy(uri = loc.uri)
+                   if (maxRedirect > 0)
+                      run(newReq, maxRedirect - 1,summary::history)
+                   else Http().singleRequest(newReq).map((_,summary::history))
+                }.getOrElse(Future.failed(
+                   HTTPException(summary,s"Location header not found on ${resp.status} for ${req.uri}",history)
+                ))
+             case Unauthorized  =>
+                import akka.http.scaladsl.model.headers.{Date, `WWW-Authenticate`}
+                val date = Date(akka.http.scaladsl.model.DateTime.now)
+                val reqWithDate = req.addHeader(date)
+                val tryFuture = for {
+                   wwa <- resp.header[`WWW-Authenticate`]
+                    .fold[Try[`WWW-Authenticate`]](
+                      Failure(HTTPException(summary,"no WWW-Authenticate header",history))
+                   )(scala.util.Success(_))
+                   headers <- Try { Sig.Client.signatureHeaders(wwa).get } //<- this should always succeed
+                   client <- keyChain.headOption.fold[Try[Sig.Client]](
+                      Failure(AuthException(summary,"no client keys",history))
+                   )(scala.util.Success(_))
+                   authorization <- client.authorize(reqWithDate,headers)
+                } yield {
+                   run(reqWithDate.addHeader(authorization), maxRedirect, summary::history, keyChain.tail)
+                }
+                Future.fromTry(tryFuture).flatten
+             case _ =>
+                Future.failed(StatusCodeException(summary,history))
+          }
+       }
+   } catch {
+      case NonFatal(e) => Future.failed(ConnectionException(req.uri.toString,e,history))
    }
    
    def GETRdfDoc(uri: AkkaUri, maxRedirect: Int=4): Future[HttpResponse] = run(rdfGetRequest(uri),maxRedirect).map(_._1)
