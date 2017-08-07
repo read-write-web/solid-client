@@ -149,14 +149,16 @@ class Web[Rdf<:RDF](implicit
 //   }
    
    
-   def turtlePostRequest(container: AkkaUri, graph: Rdf#Graph, slug: Option[String]=None)(
-    implicit writer: RDFWriter[Rdf, Try, Turtle]
+   def postRequest[M](container: AkkaUri, graph: Rdf#Graph,
+      slug: Option[String]=None
+   )(implicit
+      mediaType: RdfMediaTypes[M,Rdf]
    ): Try[HttpRequest] = { //not much reason why this should fail!
-      writer.asString(graph,"").map { ttl =>
+      mediaType.writer.asString(graph,"").map { ttl =>
          HttpRequest(
             HttpMethods.POST,
             entity = Default(
-               RdfMediaTypes.`text/turtle`.withCharset(HttpCharsets.`UTF-8`),
+               mediaType.akka.withCharset(HttpCharsets.`UTF-8`),
                ttl.length,
                Source.single(ByteString(ttl))),
             uri = container,
@@ -165,13 +167,19 @@ class Web[Rdf<:RDF](implicit
       }
    }
    
-   def POSTRdfDoc(container: AkkaUri, graph: Rdf#Graph, maxRedirect: Int=4)(
-     implicit writer: RDFWriter[Rdf, Try, Turtle]
-   ): Future[HttpResponse] =
-      Future.fromTry(turtlePostRequest(container,graph)).flatMap{ req=>
-         run(req,maxRedirect).map(_._1)
-      }
-   
+//   def POSTGraph[T<: MediaType.WithOpenCharset,BT](
+//     container: AkkaUri, graph: Rdf#Graph,
+//     mime: T=RdfMediaTypes.`text/turtle`,
+//     maxRedirect: Int=4,
+//     slug: Option[String]=None)
+//    (implicit
+//     mediaType: RdfMediaTypes[T, BT],
+//     writer: RDFWriter[Rdf, Try, BT]
+//   ): Future[HttpResponse] =
+//      Future.fromTry(postRequest(container,graph,mime,slug)) flatMap { req=>
+//         run(req,maxRedirect).map(_._1)
+//      }
+//
    //   def pointedGET(uri: AkkaUri): Future[PGWeb] =
    //   GETrdf(uri).map(_.map(PointedGraph[R](uri.toRdf,_)))
    

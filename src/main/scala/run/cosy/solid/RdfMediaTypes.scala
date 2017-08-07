@@ -1,13 +1,23 @@
 package run.cosy.solid
 
+import akka.http.scaladsl.model.MediaType
 import akka.http.scaladsl.model.headers.{ModeledCustomHeader, ModeledCustomHeaderCompanion}
-import org.w3.banana.io._
+import org.w3.banana.io.{RDFXML, _}
+import org.w3.banana.jena.Jena
 import org.w3.banana.{JsonLDReaderModule, NTriplesReaderModule, RDF, RDFModule, RDFXMLReaderModule, TurtleReaderModule}
 import run.cosy.solid.client.{MissingParserException, ParseException, ResponseSummary}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
 import scala.util.control.NoStackTrace
+
+sealed trait RdfMediaTypes[+T,Rdf<:RDF] {
+   type Banana
+   def akka: MediaType.WithOpenCharset
+   def reader: RDFReader[Rdf,Try,Banana]
+   def writer: RDFWriter[Rdf,Try,Banana]
+}
+
 
 object RdfMediaTypes {
    import akka.http.scaladsl.model
@@ -22,10 +32,45 @@ object RdfMediaTypes {
    
    //todo: check if there are other older mime types, or if there are widely used extensions
    val `text/turtle` = text("turtle","ttl")
+   type `text/turtle` = `text/turtle`.type
    val `application/rdf+xml` = applicationWithOpenCharset("rdf+xml","rdf")
-   val `application/ntriples` = applicationWithFixedCharset("ntriples",`UTF-8`,"nt")
+   type `application/rdf+xml` = `application/rdf+xml`.type
+   val `application/ntriples` = applicationWithOpenCharset("ntriples","nt")    //<- may want this to be fixed to utf-8 according to specs...
+   type `application/ntriples` = `application/ntriples`.type
    val `application/ld+json` = applicationWithOpenCharset("ld+json","jsonld")
+   type `application/ld+json` = `application/ld+json`.type
    val `text/html` = MediaTypes.`text/html`
+   
+   implicit val turtleWitness: RdfMediaTypes[`text/turtle`, Jena] = new RdfMediaTypes[`text/turtle`,Jena] {
+      override def akka = `text/turtle`
+      override type Banana = Turtle
+      override def reader = Jena.turtleReader
+      override def writer = Jena.turtleWriter
+   }
+   
+   implicit val rdfxmlWitness: RdfMediaTypes[`application/rdf+xml`,Jena] =
+      new RdfMediaTypes[`application/rdf+xml`,Jena] {
+         override def akka = `application/rdf+xml`
+         override type Banana = RDFXML
+         override def reader = Jena.rdfXMLReader
+         override def writer = Jena.rdfXMLWriter
+      }
+   
+   implicit val ntriplesWitness: RdfMediaTypes[`application/ntriples`,Jena] =
+      new RdfMediaTypes[`application/ntriples`,Jena] {
+         override def akka = `application/ntriples`
+         override type Banana = NTriples
+         override def reader = Jena.ntriplesReader
+         override def writer = Jena.ntriplesWriter
+      }
+   implicit val jsonldWitness: RdfMediaTypes[`application/ld+json`,Jena] =
+      new RdfMediaTypes[`application/ld+json`,Jena] {
+         override def akka = `application/ld+json`
+         override type Banana = org.w3.banana.io.JsonLd
+   
+         override def reader = Jena.jsonldReader
+         override def writer = Jena.jsonldCompactedWriter
+      }
    
    
    def rdfUnmarshaller[R<:RDF](response: ResponseSummary)(implicit
