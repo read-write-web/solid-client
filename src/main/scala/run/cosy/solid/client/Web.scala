@@ -29,7 +29,7 @@ import scala.util.{Failure, Try}
 object Web {
    
    
-   def rdfGetRequest(uri: AkkaUri): HttpRequest = {
+   def GETrdf(uri: AkkaUri): HttpRequest = {
       import RdfMediaTypes._
       import akka.http.scaladsl.model.headers.Accept
       HttpRequest(uri=uri.fragmentLess)
@@ -130,8 +130,6 @@ class Web[Rdf<:RDF](implicit
       case NonFatal(e) => Future.failed(ConnectionException(req.uri.toString,e,history))
    }
    
-   def GETRdfDoc(uri: AkkaUri, maxRedirect: Int=4): Future[HttpResponse] = run(rdfGetRequest(uri),maxRedirect).map(_._1)
-   
    
 //   def GETrdf(uri: AkkaUri): Future[Interpretation[R#Graph]] = {
 //      import akka.http.scaladsl.unmarshalling.Unmarshal
@@ -149,7 +147,7 @@ class Web[Rdf<:RDF](implicit
 //   }
    
    
-   def postRequest[M](container: AkkaUri, graph: Rdf#Graph,
+   def POST[M](container: AkkaUri, graph: Rdf#Graph,
       slug: Option[String]=None
    )(implicit
       mediaType: RdfMediaTypes[M,Rdf]
@@ -167,21 +165,28 @@ class Web[Rdf<:RDF](implicit
       }
    }
    
-//   def POSTGraph[T<: MediaType.WithOpenCharset,BT](
-//     container: AkkaUri, graph: Rdf#Graph,
-//     mime: T=RdfMediaTypes.`text/turtle`,
-//     maxRedirect: Int=4,
-//     slug: Option[String]=None)
-//    (implicit
-//     mediaType: RdfMediaTypes[T, BT],
-//     writer: RDFWriter[Rdf, Try, BT]
-//   ): Future[HttpResponse] =
-//      Future.fromTry(postRequest(container,graph,mime,slug)) flatMap { req=>
-//         run(req,maxRedirect).map(_._1)
-//      }
-//
-   //   def pointedGET(uri: AkkaUri): Future[PGWeb] =
-   //   GETrdf(uri).map(_.map(PointedGraph[R](uri.toRdf,_)))
+   def PUT[M](resource: AkkaUri, graph: Rdf#Graph
+   )(implicit
+    mediaType: RdfMediaTypes[M,Rdf]
+   ): Try[HttpRequest] = { //not much reason why this should fail!
+      mediaType.writer.asString(graph,"").map { ttl =>
+         HttpRequest(
+            HttpMethods.PUT,
+            entity = Default(
+               mediaType.akka.withCharset(HttpCharsets.`UTF-8`),
+               ttl.length,
+               Source.single(ByteString(ttl))),
+            uri = resource
+         )
+      }
+   }
+   
+   def DELETE[M](resource: AkkaUri)(implicit
+    mediaType: RdfMediaTypes[M,Rdf]
+   ) = HttpRequest(
+         HttpMethods.DELETE,
+         uri = resource
+      )
    
    
 }
