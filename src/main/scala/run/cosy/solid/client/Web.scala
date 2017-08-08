@@ -1,11 +1,6 @@
 package run.cosy.solid.client
 
-
-
-
 // import $file.RDFaBananaParser, RDFaBananaParser.{SesameRDFaReader,SesameRDFXMLReader}
-
-//import $ivy.`ch.qos.logback:logback-classic:1.2.3`
 
 import _root_.run.cosy.auth.{HttpSignature => Sig}
 import _root_.run.cosy.solid.util._
@@ -19,7 +14,7 @@ import akka.stream._
 import akka.stream.scaladsl._
 import akka.util.ByteString
 import org.w3.banana._
-import org.w3.banana.io.{RDFWriter, Turtle}
+import org.w3.banana.io._
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.control.NonFatal
@@ -59,9 +54,9 @@ case class ResponseSummary(
 )
 
 class Web[Rdf<:RDF](implicit
-   val ec: ExecutionContext,
-   val as: ActorSystem,
-   val mat: Materializer
+ val ec: ExecutionContext,
+ val as: ActorSystem,
+ val mat: Materializer
 ) {
    import Web._
    type PGWeb = Interpretation[PointedGraph[Rdf]]
@@ -130,21 +125,35 @@ class Web[Rdf<:RDF](implicit
       case NonFatal(e) => Future.failed(ConnectionException(req.uri.toString,e,history))
    }
    
-   
-//   def GETrdf(uri: AkkaUri): Future[Interpretation[R#Graph]] = {
-//      import akka.http.scaladsl.unmarshalling.Unmarshal
-//
-//      GETRdfDoc(uri).flatMap {
-//         case HttpResponse(status,headers,entity,protocol) => {
-//            implicit  val reqUnmarhaller = RdfMediaTypes.rdfUnmarshaller(
-//               ResponseSummary(uri,status,headers,entity.contentType)
-//            )
-//            Unmarshal(entity).to[R#Graph].map {g =>
-//               Interpretation[R#Graph](uri,status,headers,entity.contentType,g)
-//            }
-//         }
-//      }
-//   }
+   // it looks like these functions that require Rdf etc. should be in a different layer, since they interpret the
+   // responses
+   def GETpg(
+    uri: AkkaUri,
+    keyChain: List[Sig.Client]=List()
+   )(implicit
+    ops: RDFOps[Rdf],
+    rdfxmlReader: RDFReader[Rdf, Try, RDFXML],
+    turtleReader: RDFReader[Rdf, Try, Turtle],
+    ntriplesReader: RDFReader[Rdf, Try, NTriples],
+    jsonLdReader: RDFReader[Rdf, Try, JsonLd]
+   ): Future[(PGWeb,List[ResponseSummary])] = {
+      import akka.http.scaladsl.unmarshalling.Unmarshal
+
+      run(GETrdf(uri),keyChain=keyChain).flatMap {
+         case (HttpResponse(status,headers,entity,protocol),summary) => {
+            implicit  val reqUnmarhaller = RdfMediaTypes.rdfUnmarshaller(
+               ResponseSummary(uri,status,headers,entity.contentType)
+            )
+            Unmarshal(entity).to[Rdf#Graph].map {g =>
+               (Interpretation[PointedGraph[Rdf]](
+                  uri,
+                  status,
+                  headers, entity.contentType,
+                  PointedGraph[Rdf](uri.toRdf,g)),summary)
+            }
+         }
+      }
+   }
    
    
    def POST[M](container: AkkaUri, graph: Rdf#Graph,
