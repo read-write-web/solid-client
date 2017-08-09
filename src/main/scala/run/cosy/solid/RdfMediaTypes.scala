@@ -31,16 +31,30 @@ object RdfMediaTypes {
    case class NoUnmarshallerException(mime: ContentType, msg: String) extends java.lang.RuntimeException with NoStackTrace with Product with Serializable
    
    //todo: check if there are other older mime types, or if there are widely used extensions
-   val `text/turtle` = text("turtle","ttl")
+   val `text/turtle`: MediaType.WithOpenCharset = text("turtle","ttl")
    type `text/turtle` = `text/turtle`.type
-   val `application/rdf+xml` = applicationWithOpenCharset("rdf+xml","rdf")
-   type `application/rdf+xml` = `application/rdf+xml`.type
-   val `application/ntriples` = applicationWithOpenCharset("ntriples","nt")    //<- may want this to be fixed to utf-8 according to specs...
-   type `application/ntriples` = `application/ntriples`.type
-   val `application/ld+json` = applicationWithOpenCharset("ld+json","jsonld")
-   type `application/ld+json` = `application/ld+json`.type
-   val `text/html` = MediaTypes.`text/html`
    
+   val `application/rdf+xml`: MediaType.WithOpenCharset =
+      applicationWithOpenCharset("rdf+xml","rdf")
+   type `application/rdf+xml` = `application/rdf+xml`.type
+   
+   val `application/ntriples`: MediaType.WithOpenCharset =
+      applicationWithOpenCharset("ntriples","nt")    //<- may want this to be fixed to utf-8 according to specs...
+   type `application/ntriples` = `application/ntriples`.type
+   
+   val `application/ld+json`: MediaType.WithOpenCharset =
+      applicationWithOpenCharset("ld+json","jsonld")
+   type `application/ld+json` = `application/ld+json`.type
+   
+   val `text/html`: MediaType.WithOpenCharset =
+      MediaTypes.`text/html`
+   type `text/html` = `text/html`.type
+   
+   val `application/sparql-update`: MediaType.WithOpenCharset =
+      applicationWithOpenCharset("application/sparql-update",".ru")
+   type `application/sparql-update` = `application/sparql-update`.type 
+   
+   //todo: these witnesses being Jena specific, should be moved to a Jena specific project
    implicit val turtleWitness: RdfMediaTypes[`text/turtle`, Jena] = new RdfMediaTypes[`text/turtle`,Jena] {
       override def akka = `text/turtle`
       override type Banana = Turtle
