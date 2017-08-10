@@ -109,7 +109,7 @@ class Web[Rdf<:RDF](http: HTTP) {
    
    def DELETE[M](resource: AkkaUri)(implicit
     mediaType: RdfMediaTypes[M,Rdf]
-   ): HttpMessage = HttpRequest(
+   ): HttpRequest = HttpRequest(
          HttpMethods.DELETE,
          uri = resource
       )
