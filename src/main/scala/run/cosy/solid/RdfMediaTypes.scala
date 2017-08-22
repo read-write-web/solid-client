@@ -38,9 +38,9 @@ object RdfMediaTypes {
       applicationWithOpenCharset("rdf+xml","rdf")
    type `application/rdf+xml` = `application/rdf+xml`.type
    
-   val `application/ntriples`: MediaType.WithOpenCharset =
-      applicationWithOpenCharset("ntriples","nt")    //<- may want this to be fixed to utf-8 according to specs...
-   type `application/ntriples` = `application/ntriples`.type
+   val `application/n-triples`: MediaType.WithOpenCharset =
+      applicationWithOpenCharset("n-triples","nt")    //<- may want this to be fixed to utf-8 according to specs...
+   type `application/n-triples` = `application/n-triples`.type
    
    val `application/ld+json`: MediaType.WithOpenCharset =
       applicationWithOpenCharset("ld+json","jsonld")
@@ -52,7 +52,7 @@ object RdfMediaTypes {
    
    val `application/sparql-update`: MediaType.WithOpenCharset =
       applicationWithOpenCharset("application/sparql-update",".ru")
-   type `application/sparql-update` = `application/sparql-update`.type 
+   type `application/sparql-update` = `application/sparql-update`.type
    
    //todo: these witnesses being Jena specific, should be moved to a Jena specific project
    implicit val turtleWitness: RdfMediaTypes[`text/turtle`, Jena] = new RdfMediaTypes[`text/turtle`,Jena] {
@@ -70,9 +70,9 @@ object RdfMediaTypes {
          override def writer = Jena.rdfXMLWriter
       }
    
-   implicit val ntriplesWitness: RdfMediaTypes[`application/ntriples`,Jena] =
-      new RdfMediaTypes[`application/ntriples`,Jena] {
-         override def akka = `application/ntriples`
+   implicit val ntriplesWitness: RdfMediaTypes[`application/n-triples`,Jena] =
+      new RdfMediaTypes[`application/n-triples`,Jena] {
+         override def akka = `application/n-triples`
          override type Banana = NTriples
          override def reader = Jena.ntriplesReader
          override def writer = Jena.ntriplesWriter
@@ -102,7 +102,7 @@ object RdfMediaTypes {
          val readerOpt = entity.contentType.mediaType match { //<- this needs to be tuned!
             case `text/turtle` => Some(turtleReader)
             case `application/rdf+xml` => Some(rdfxmlReader)
-            case `application/ntriples` => Some(ntriplesReader)
+            case `application/n-triples` => Some(ntriplesReader)
             case `application/ld+json` => Some(jsonLdReader)
             // case `text/html` => Some(rdfa)
             case _ => None

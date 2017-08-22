@@ -23,7 +23,7 @@ object Web {
       import akka.http.scaladsl.model.headers.Accept
       HttpRequest(uri=uri.fragmentLess)
        .addHeader(Accept(`text/turtle`,`application/rdf+xml`,
-          `application/ntriples`,
+          `application/n-triples`,
           `application/ld+json`.withQValue(0.8), //our parser uses more memory
           `text/html`.withQValue(0.2))) //we can't specify that we want RDFa in our markup
    }
